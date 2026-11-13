@@ -201,7 +201,16 @@ async function detectChallenge(browser: Browser): Promise<boolean> {
  * Returns true when the page navigated away from the challenge.
  */
 async function solveChallenge(browser: Browser, deadline: number): Promise<boolean> {
-  const metrics = (await browser.send({ method: 'Page.getLayoutMetrics' })) as Record<string, unknown>;
+  // Every call below is bounded: an unbounded getLayoutMetrics or click on a
+  // stalled transport would hang past the caller's budget, which is exactly
+  // how a probe once ran for minutes.
+  const stepBudget = () => Math.max(1500, Math.min(8000, deadline - now()));
+
+  const metrics = (await browser.send(
+    { method: 'Page.getLayoutMetrics' },
+    stepBudget(),
+  ).catch(() => null)) as Record<string, unknown> | null;
+  if (metrics === null) return false;
   const viewport =
     (metrics?.cssLayoutViewport as Record<string, unknown> | undefined) ??
     (metrics?.layoutViewport as Record<string, unknown> | undefined);
@@ -214,13 +223,17 @@ async function solveChallenge(browser: Browser, deadline: number): Promise<boole
   ];
 
   for (const [fx, fy] of points) {
-    if (now() >= deadline) return false;
+    // Leave room for the post-click wait and detection; starting a click we
+    // cannot finish is worse than giving up.
+    if (now() + 4000 >= deadline) return false;
 
-    await browser
-      .click(Math.round(width * fx), Math.round(height * fy))
-      .catch(() => {
-        // A click outside any target is harmless; keep trying other points.
-      });
+    await withTimeout(
+      stepBudget(),
+      () => browser.click(Math.round(width * fx), Math.round(height * fy)),
+      'challenge click',
+    ).catch(() => {
+      // A click outside any target is harmless; keep trying other points.
+    });
 
     // Give the challenge a moment to re-evaluate before checking again.
     await new Promise((r) => setTimeout(r, 3500));
