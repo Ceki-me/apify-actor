@@ -1,0 +1,23 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Fetched pages",
+      "transformation": {
+        "fields": ["url", "ok", "status", "title", "finalUrl", "error"]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "url": { "label": "URL", "format": "text" },
+          "ok": { "label": "OK", "format": "boolean" },
+          "status": { "label": "HTTP", "format": "number" },
+          "title": { "label": "Title", "format": "text" },
+          "finalUrl": { "label": "Final URL", "format": "text" },
+          "error": { "label": "Error", "format": "text" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "actorSpecification": 1,
+  "name": "ceki-real-browser-fetch",
+  "title": "Real Browser Fetch — protected pages via warmed Chrome sessions",
+  "description": "Fetch pages that block ordinary scrapers. Requests run through a real, already-warmed Chrome profile rented from Ceki — genuine fingerprint, real cookies, persistent session across runs. Returns HTML, cookies and screenshots.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "meta": {
+    "templateId": "project_empty"
+  },
+  "dockerfile": "../Dockerfile",
+  "input": "./input_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
+  "minMemoryMbytes": 1024,
+  "maxMemoryMbytes": 4096,
+  "pricing": {
+    "pricingModel": "PAY_PER_EVENT",
+    "pricePerEvent": {
+      "page-fetched": {
+        "eventTitle": "Page fetched",
+        "eventDescription": "Charged once per successfully retrieved page. Failed fetches are not charged.",
+        "eventPriceUsd": 0.01
+      },
+      "apify-actor-start": {
+        "eventTitle": "Actor start",
+        "eventDescription": "Charged once when the Actor starts.",
+        "eventPriceUsd": 0.005
+      }
+    }
+  }
+}

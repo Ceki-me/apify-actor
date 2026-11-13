@@ -1,0 +1,83 @@
+{
+  "title": "Real Browser Fetch input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "urls": {
+      "title": "URLs to fetch",
+      "type": "array",
+      "description": "Pages to retrieve. Each URL produces one dataset item and one charge (failures are free).",
+      "editor": "stringList",
+      "prefill": [],
+      "items": {
+        "type": "string",
+        "pattern": "^https?://"
+      }
+    },
+    "browserId": {
+      "title": "Browser ID",
+      "type": "integer",
+      "description": "Which Ceki browser to drive. Find it in your Ceki dashboard. Overrides the CEKI_BROWSER_ID environment variable.",
+      "editor": "number"
+    },
+    "waitUntil": {
+      "title": "Wait strategy",
+      "type": "string",
+      "description": "How long to wait after navigation before extracting. `selector` additionally waits for the CSS selector below.",
+      "enum": ["load", "networkidle", "selector"],
+      "enumTitles": [
+        "Load event — fastest",
+        "Network idle — waits for XHR/fetch to settle",
+        "Specific selector — waits for an element to appear"
+      ],
+      "default": "load",
+      "editor": "select"
+    },
+    "waitSelector": {
+      "title": "Wait selector",
+      "type": "string",
+      "description": "CSS selector that must exist before extraction. Used only when the wait strategy is `selector`.",
+      "editor": "textfield"
+    },
+    "networkIdleMs": {
+      "title": "Network idle window (ms)",
+      "type": "integer",
+      "description": "How long the page must have no new resource requests to count as idle. Used only with the `networkidle` strategy.",
+      "default": 500,
+      "minimum": 100,
+      "maximum": 10000
+    },
+    "timeoutSecs": {
+      "title": "Timeout per URL (seconds)",
+      "type": "integer",
+      "description": "Upper bound for navigation plus waiting for a single URL. A URL that exceeds it is reported as failed and does not stop the run.",
+      "default": 60,
+      "minimum": 5,
+      "maximum": 300
+    },
+    "returnFields": {
+      "title": "What to return",
+      "type": "array",
+      "description": "Fields to extract from each page. Cookies and screenshots are best-effort; HTML is always available.",
+      "editor": "select",
+      "items": {
+        "type": "string",
+        "enum": ["html", "cookies", "screenshot"]
+      },
+      "default": ["html"]
+    },
+    "fullPageScreenshot": {
+      "title": "Full-page screenshot",
+      "type": "boolean",
+      "description": "Capture the entire scrollable page instead of just the visible viewport.",
+      "default": false
+    },
+    "keepSession": {
+      "title": "Keep the session warmed",
+      "type": "boolean",
+      "description": "Leave the browser session alive after the run so the next run resumes onto the same warmed profile. Disable only for one-shot runs that should leave nothing behind.",
+      "default": true
+    }
+  },
+  "required": ["urls"]
+}
