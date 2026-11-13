@@ -1,0 +1,11 @@
+import { connect } from '@ceki/sdk';
+import { acquireSession } from '../dist/session.js';
+import { fetchUrl, normalizeOptions } from '../dist/fetch.js';
+const client = await connect(process.env.CEKI_TOKEN, {});
+const s = await acquireSession(client, 58164);
+const r = await fetchUrl(s.browser, 'https://www.reddit.com/', normalizeOptions({timeoutSecs:60}), null);
+const h = r.html || '';
+console.log('status', r.status, 'len', h.length);
+const text = h.replace(/<script[\s\S]*?<\/script>/g,'').replace(/<style[\s\S]*?<\/style>/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+console.log('TEXT:', text.slice(0, 400));
+await client.disconnect();
