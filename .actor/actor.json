@@ -3,7 +3,7 @@
   "name": "ceki-real-browser-fetch",
   "title": "Real Browser Fetch \u2014 protected pages via warmed Chrome sessions",
   "description": "Fetch pages that block ordinary scrapers. Requests run through a real, already-warmed Chrome profile rented from Ceki \u2014 genuine fingerprint, real cookies, persistent session across runs. Returns HTML, cookies and screenshots.",
-  "version": "0.3",
+  "version": "0.4",
   "buildTag": "latest",
   "meta": {
     "templateId": "project_empty"

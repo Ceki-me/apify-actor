@@ -139,7 +139,9 @@ async function readStatus(browser: Browser): Promise<number | null> {
     })) as Record<string, unknown>;
     const result = (res?.result as Record<string, unknown> | undefined) ?? res;
     const value = result?.value;
-    return typeof value === 'number' ? value : null;
+    // 0 is what Chrome reports for a document that never received a response
+    // (error pages, aborted loads). Treat it as "unknown" rather than a status.
+    return typeof value === 'number' && value > 0 ? value : null;
   } catch {
     return null;
   }
@@ -198,6 +200,30 @@ export async function fetchUrl(
     );
     timing.navigateMs = now() - navStart;
 
+    // `Page.navigate` can return before the new document commits — on a slow
+    // host the renderer keeps serving the previous page. Extracting here would
+    // silently return the DOM of whatever the tab showed before (observed:
+    // zalando.de yielding leboncoin.fr markup). Wait for the document URL to
+    // actually belong to the requested origin before touching the DOM.
+    const targetHost = new URL(url).host;
+    await withTimeout(
+      Math.max(2000, deadline - now()),
+      () => waitForExpression(
+        browser,
+        `(() => {
+           try {
+             const h = location.host;
+             return h === ${JSON.stringify(targetHost)} || h.endsWith('.' + ${JSON.stringify(targetHost)});
+           } catch { return false; }
+         })()`,
+        deadline,
+      ),
+      'commit',
+    ).catch(() => {
+      // Never committed: the extraction below reports the mismatch rather than
+      // returning stale markup.
+    });
+
     const waitStart = now();
     if (opts.waitUntil === 'selector' && opts.waitSelector) {
       const selectorLiteral = JSON.stringify(opts.waitSelector);
@@ -219,6 +245,29 @@ export async function fetchUrl(
     result.status = await readStatus(browser);
     const title = await readString(browser, 'document.title');
     if (title !== null) result.title = title;
+
+    // A navigation that fails at the network level still resolves
+    // `Page.navigate`: Chrome swaps in its own error document and the CDP call
+    // returns normally. Without this check a timed-out host is indistinguishable
+    // from a successful fetch, and the caller is billed for an error page.
+    //
+    // Two independent signals, because either can be absent:
+    //   - the internal `chrome-error://` URL, set when the main frame failed
+    //   - the error-page marker Chrome renders into the DOM
+    const navError = await readString(
+      browser,
+      `(() => {
+         const url = location.href;
+         if (url.startsWith('chrome-error://')) return 'navigation failed (chrome-error)';
+         if (document.querySelector('#main-frame-error, .neterror')) {
+           return 'navigation failed (net error page)';
+         }
+         return null;
+       })()`,
+    );
+    if (navError !== null) {
+      throw new Error(navError);
+    }
 
     if (opts.returnFields.includes('html')) {
       const html = await readString(browser, 'document.documentElement.outerHTML');
