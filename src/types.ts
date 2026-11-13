@@ -42,6 +42,12 @@ export interface ActorInput {
   fullPageScreenshot?: boolean;
 
   /**
+   * Attempt to click through a Cloudflare interstitial when one appears.
+   * Defaults to true. Disable for targets where poking the page is unwanted.
+   */
+  solveChallenge?: boolean;
+
+  /**
    * Keep the browser session alive after the run so the next run lands on the
    * same warmed profile. Set false only for one-shot runs that should not
    * leave a session behind.
@@ -73,6 +79,8 @@ export interface FetchResult {
   cookies?: Array<Record<string, unknown>>;
   /** Base64-encoded PNG. */
   screenshot?: string;
+  /** True when a Cloudflare interstitial was passed before extraction. */
+  challengeSolved?: boolean;
   timing: FetchTiming;
   /** Which browser served this URL and whether the session was reused. */
   browser: {

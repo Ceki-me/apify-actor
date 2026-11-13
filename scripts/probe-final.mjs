@@ -12,7 +12,7 @@ console.log(`session=${s.sessionId} resumed=${s.resumed}\n`);
 const rows = [];
 for (const url of targets) {
   const want = new URL(url).host;
-  const r = await fetchUrl(s.browser, url, normalizeOptions({ timeoutSecs: 60 }), null);
+  const r = await fetchUrl(s.browser, url, normalizeOptions({ timeoutSecs: 75, solveChallenge: true }), null);
   const html = r.html || '';
   const text = html.replace(/<script[\s\S]*?<\/script>/g,'').replace(/<style[\s\S]*?<\/style>/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
 
@@ -28,8 +28,9 @@ for (const url of targets) {
   else if (html.length < 5000) { verdict='BLOCKED'; why = `tiny DOM ${html.length}`; }
   else { verdict='PASSED'; why = `${html.length} chars`; }
 
+  if (r.challengeSolved) why += ' [+challenge]';
   rows.push({url, verdict, why});
-  console.log(`${verdict.padEnd(11)} ${url.replace(/^https:\/\/(www\.)?/,'').padEnd(28)} ${why}`);
+  console.log(`${verdict.padEnd(11)} ${url.replace(/^https:\/\/(www\.)?/,'').padEnd(28)} ${why.padEnd(34)} ${(r.timing.totalMs/1000).toFixed(1)}s`);
 }
 
 const by = {};
