@@ -439,6 +439,27 @@ async function fetchUrlInner(
       if (!html) {
         throw new Error('empty document');
       }
+
+      // A near-empty shell is the other failure shape: the response arrived
+      // but the page never rendered. Booking.com answers HTTP 202 with ~1.2 KB
+      // of scaffolding while its bot check decides, and that is indistinguishable
+      // from a real page by status alone. Treating it as content ships an empty
+      // document and bills the caller for it.
+      const TEXT_ONLY_MIN = 200;
+      const textContent = await readString(
+        browser,
+        `(() => {
+           const b = document.body;
+           if (!b) return '';
+           return (b.innerText || '').trim();
+         })()`,
+        Math.max(2000, Math.min(10000, deadline - now())),
+      );
+      if (html.length < 2000 && (textContent ?? '').length < TEXT_ONLY_MIN) {
+        throw new Error(
+          `empty shell: ${html.length} bytes of markup, ${(textContent ?? '').length} chars of text`
+        );
+      }
     }
 
     if (opts.returnFields.includes('cookies')) {
