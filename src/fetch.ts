@@ -172,20 +172,41 @@ async function readString(browser: Browser, expression: string, timeout = 15000)
  * with a `cf-chl-widget-*` id. Matching on the widget id rather than the title
  * alone keeps this from firing on ordinary pages that mention Cloudflare.
  */
-async function detectChallenge(browser: Browser): Promise<boolean> {
+type PageState = 'ok' | 'challenge' | 'blocked';
+
+/**
+ * Classify the current page as a solvable challenge, a hard block, or neither.
+ *
+ * The distinction matters twice over. A solvable challenge has a Turnstile
+ * widget and can be clicked through. A hard block ("Additional Verification
+ * Required" plus a Ray ID) cannot — clicking around on it navigates to
+ * Cloudflare's help pages, which is how a run once reported a successful fetch
+ * of Indeed's troubleshooting article instead of its job listings.
+ */
+async function classifyPage(browser: Browser, timeout = 15000): Promise<PageState> {
   const value = await readString(
     browser,
     `(() => {
-       const t = document.title || '';
-       const hasWidget = !!document.querySelector('[id^=cf-chl-widget]');
-       const hasCopy = /humans only|just a moment|checking your browser|verify you are human/i.test(
-         document.body ? document.body.innerText.slice(0, 400) : ''
-       );
-       return (hasWidget || hasCopy) && /just a moment|attention required|humans only/i.test(t)
-         ? 'yes' : 'no';
+       const text = document.body ? document.body.innerText.slice(0, 800) : '';
+       const title = document.title || '';
+
+       // Hard block: Cloudflare refuses and offers no interactive widget.
+       if (/additional verification required/i.test(text)) return 'blocked';
+       if (/error 1020|access denied/i.test(text) && /ray id/i.test(text)) return 'blocked';
+
+       const hasWidget = !!document.querySelector('[id^=cf-chl-widget]')
+         || !!document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+       const interstitial = /just a moment|attention required|humans only|checking your browser|verify you are human/i
+         .test(title + ' ' + text.slice(0, 400));
+
+       return hasWidget && interstitial ? 'challenge' : 'ok';
      })()`,
+    timeout,
   );
-  return value === 'yes';
+
+  if (value === 'challenge') return 'challenge';
+  if (value === 'blocked') return 'blocked';
+  return 'ok';
 }
 
 /**
@@ -238,7 +259,7 @@ async function solveChallenge(browser: Browser, deadline: number): Promise<boole
     // Give the challenge a moment to re-evaluate before checking again.
     await new Promise((r) => setTimeout(r, 3500));
 
-    if (!(await detectChallenge(browser))) return true;
+    if ((await classifyPage(browser, stepBudget())) !== 'challenge') return true;
   }
 
   return false;
@@ -324,7 +345,18 @@ async function fetchUrlInner(
     // A Cloudflare interstitial can appear before or instead of the requested
     // page. Solving it here means callers get content rather than a challenge
     // page, and the solve cost lands inside the same per-URL timeout.
-    if (opts.solveChallenge && (await detectChallenge(browser))) {
+    const pageState = await classifyPage(browser, Math.max(2000, Math.min(15000, deadline - now())));
+
+    if (pageState === 'blocked') {
+      // No widget to click: Cloudflare refused outright. Retrying in-place does
+      // nothing, so report it rather than pretending content was retrieved.
+      throw new Error('blocked by cloudflare (additional verification required)');
+    }
+
+    if (pageState === 'challenge') {
+      if (!opts.solveChallenge) {
+        throw new Error('cloudflare challenge present (solveChallenge disabled)');
+      }
       const solved = await solveChallenge(browser, deadline);
       if (!solved) {
         throw new Error('cloudflare challenge not solved');
@@ -374,6 +406,24 @@ async function fetchUrlInner(
     );
     if (navError !== null) {
       throw new Error(navError);
+    }
+
+    // Clicking around a challenge page can navigate somewhere else entirely --
+    // Indeed's block page links to a Cloudflare troubleshooting article on its
+    // own host, which then looks like a successful fetch of the requested URL.
+    // The document must still belong to the requested registrable domain.
+    if (result.finalUrl) {
+      try {
+        const root = (h: string) => h.split('.').slice(-2).join('.');
+        const wantRoot = root(targetHost);
+        const gotRoot = root(new URL(result.finalUrl).host);
+        if (gotRoot !== wantRoot) {
+          throw new Error(`redirected off-target to ${new URL(result.finalUrl).host}`);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('redirected off-target')) throw err;
+        // Unparseable finalUrl: leave it to the caller to inspect.
+      }
     }
 
     if (opts.returnFields.includes('html')) {
