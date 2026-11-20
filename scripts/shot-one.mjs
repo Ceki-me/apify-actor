@@ -1,0 +1,11 @@
+import { connect } from '@ceki/sdk';
+import { acquireSession } from '../dist/session.js';
+import { fetchUrl, normalizeOptions } from '../dist/fetch.js';
+import { writeFileSync } from 'node:fs';
+const url = process.argv[2], name = process.argv[3];
+const client = await connect(process.env.CEKI_TOKEN, {});
+const s = await acquireSession(client, Number(process.env.CEKI_BROWSER_ID));
+const r = await fetchUrl(s.browser, url, normalizeOptions({ timeoutSecs: 90, returnFields: ['html','screenshot'] }), null);
+console.log(`ok=${r.ok} status=${r.status} title=${JSON.stringify(r.title)} html=${(r.html||'').length} ${r.error||''}`);
+if (r.screenshot) writeFileSync(`/home/node/.openclaw/workspace/screenshots/apify-cf/${name}.png`, Buffer.from(r.screenshot,'base64'));
+await client.disconnect(); process.exit(0);

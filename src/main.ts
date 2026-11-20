@@ -1,75 +1,109 @@
 /**
- * Actor entrypoint.
+ * Actor entrypoint — a thin HTTP client.
  *
- * Flow per run:
- *   1. connect to Ceki with the account key from env
- *   2. acquire a session — resume a live one for the target browser, else rent
- *   3. fetch every input URL sequentially (one browser, one tab)
- *   4. either leave the session alive (default) or release it
+ * The Actor holds no browser logic, no CDP, and no Ceki token. It posts URLs to
+ * the fetch service and writes the answers to the dataset. Everything valuable
+ * — session management, challenge solving, the warmed profiles — lives behind
+ * the endpoint.
  *
- * Sequential, not parallel, on purpose: a single rented browser has one tab,
- * and the relay caps commands per session. Concurrency belongs at the level of
- * parallel Actor runs on different browsers, which is what Apify already does.
+ * That split is not cosmetic. This repository is public: anyone reading it sees
+ * exactly what we do. Keeping the interesting part out of it is the difference
+ * between publishing a client and publishing a recipe.
  */
 import { Actor, log } from 'apify';
-import { connect } from '@ceki/sdk';
-import type { Client } from '@ceki/sdk';
 
-import { acquireSession } from './session.js';
-import { fetchUrl, normalizeOptions } from './fetch.js';
-import type { ActorInput, FetchResult } from './types.js';
+import { buildRequestBody, mapLimit, normalizeUrls } from './input.js';
+import type { ActorInput, FetchResponse } from './types.js';
 
 /** Apify PPE event charged once per successfully fetched URL. */
 const EVENT_PER_RESULT = 'page-fetched';
 
-const DEFAULT_BROWSER_ID = Number(process.env.CEKI_BROWSER_ID ?? 0) || undefined;
+/** How many URLs to have in flight at once. */
+const DEFAULT_CONCURRENCY = 4;
 
-function requireToken(): string {
-  const token = (process.env.CEKI_TOKEN ?? '').trim();
-  if (token === '') {
+function requireEnv(name: string): string {
+  const value = (process.env[name] ?? '').trim();
+  if (value === '') {
     throw new Error(
-      'CEKI_TOKEN is not set. Add your Ceki agent key as a secret environment ' +
-        'variable in the Actor settings, or pass it in the input.',
+      `${name} is not set. Add it as a secret environment variable in the Actor settings.`,
     );
   }
-  return token;
+  return value;
 }
 
-function resolveBrowserId(input: ActorInput): number {
-  const id = input.browserId ?? DEFAULT_BROWSER_ID;
-  if (id === undefined || Number.isNaN(id) || id <= 0) {
-    throw new Error(
-      'No browser selected. Pass `browserId` in the input, or set the ' +
-        'CEKI_BROWSER_ID environment variable on the Actor.',
-    );
-  }
-  return id;
+interface ServiceConfig {
+  baseUrl: string;
+  key: string;
+  timeoutMs: number;
 }
 
-function normalizeUrls(input: ActorInput): string[] {
-  const urls = (input.urls ?? [])
-    .map((u) => String(u).trim())
-    .filter((u) => u.length > 0);
+function readConfig(): ServiceConfig {
+  const baseUrl = requireEnv('CEKI_FETCH_URL').replace(/\/+$/, '');
+  const key = requireEnv('CEKI_FETCH_KEY');
+  const timeoutSecs = Number(process.env.CEKI_FETCH_TIMEOUT_SECS ?? 300);
 
-  if (urls.length === 0) {
-    throw new Error('`urls` is empty — provide at least one URL to fetch.');
-  }
+  return {
+    baseUrl,
+    key,
+    timeoutMs: (Number.isFinite(timeoutSecs) && timeoutSecs > 0 ? timeoutSecs : 300) * 1000,
+  };
+}
 
-  // Reject non-HTTP schemes early: file:// and data: would let a caller read
-  // the provider's local files through the rented browser.
-  for (const url of urls) {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new Error(`Invalid URL: ${url}`);
+function failure(url: string, error: string, started: number): FetchResponse {
+  return {
+    url,
+    ok: false,
+    status: null,
+    finalUrl: null,
+    timing: { queueMs: 0, navigateMs: 0, waitMs: 0, extractMs: 0, totalMs: Date.now() - started },
+    worker: null,
+    error,
+  };
+}
+
+/**
+ * POST one URL to the service.
+ *
+ * Never throws: a failure is reported as `ok: false` plus `error`, so one bad
+ * URL does not abort a multi-URL run.
+ */
+async function fetchOne(
+  config: ServiceConfig,
+  url: string,
+  input: ActorInput,
+): Promise<FetchResponse> {
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+
+  try {
+    const res = await fetch(`${config.baseUrl}/v1/fetch`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.key}`,
+      },
+      body: JSON.stringify(buildRequestBody(url, input)),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return failure(url, `service returned HTTP ${res.status}: ${text.slice(0, 300)}`, started);
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error(`Unsupported URL scheme "${parsed.protocol}" in ${url}`);
-    }
-  }
 
-  return urls;
+    return (await res.json()) as FetchResponse;
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? err.name === 'AbortError'
+          ? `service request timed out after ${config.timeoutMs}ms`
+          : err.message
+        : String(err);
+    return failure(url, message, started);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function main(): Promise<void> {
@@ -77,92 +111,36 @@ async function main(): Promise<void> {
   const input = ((await Actor.getInput<ActorInput>()) ?? {}) as ActorInput;
 
   const urls = normalizeUrls(input);
-  const browserId = resolveBrowserId(input);
-  const opts = normalizeOptions({
-    waitUntil: input.waitUntil,
-    waitSelector: input.waitSelector,
-    networkIdleMs: input.networkIdleMs,
-    timeoutSecs: input.timeoutSecs,
-    returnFields: input.returnFields,
-    fullPageScreenshot: input.fullPageScreenshot,
-  });
-  const keepSession = input.keepSession !== false;
+  const config = readConfig();
+  const concurrency = Math.max(1, Math.min(16, input.concurrency ?? DEFAULT_CONCURRENCY));
 
-  const token = requireToken();
+  log.info('fetching', { urls: urls.length, concurrency, service: config.baseUrl });
 
-  let client: Client | null = null;
-  let sessionMeta: FetchResult['browser'] = null;
+  const results = await mapLimit(urls, concurrency, async (url) => {
+    const result = await fetchOne(config, url, input);
 
-  try {
-    client = await connect(token, {
-      apiUrl: process.env.CEKI_API_URL,
-      relayUrl: process.env.CEKI_RELAY_URL,
-    });
+    await Actor.pushData(result);
 
-    const sessionStart = Date.now();
-    const session = await acquireSession(client, browserId);
-    const sessionMs = Date.now() - sessionStart;
-
-    sessionMeta = {
-      scheduleId: session.scheduleId,
-      sessionId: session.sessionId,
-      resumed: session.resumed,
-    };
-
-    log.info('session acquired', {
-      browserId,
-      sessionId: session.sessionId,
-      resumed: session.resumed,
-      sessionMs,
-    });
-
-    for (const url of urls) {
-      const result = await fetchUrl(session.browser, url, opts, sessionMeta);
-      // Attribute the acquisition cost to every URL's timing breakdown so the
-      // numbers account for the full cost of getting to that page.
-      result.timing.sessionMs = sessionMs;
-
-      await Actor.pushData(result);
-
-      if (result.ok) {
-        // Pay-per-event: one charge per successfully delivered page. Failures
-        // are free — charging for a page the user did not receive would be
-        // wrong, and it also stops us from billing for our own outages.
-        try {
-          await Actor.charge({ eventName: EVENT_PER_RESULT });
-        } catch (err) {
-          log.warning('charge failed', { url, err: String(err) });
-        }
-      } else {
-        log.warning('fetch failed', { url, error: result.error });
-      }
-    }
-
-    if (!keepSession) {
-      // Explicit release ends the session for the provider too. Without it the
-      // session outlives the run, which is the whole point of keepSession.
-      await session.browser.release();
-      log.info('session released', { sessionId: session.sessionId });
-    } else {
-      // Detach without ending: the session stays alive at the provider, so the
-      // next run resumes onto the same warmed profile.
-      await client.disconnect();
-      log.info('session kept for reuse', { sessionId: session.sessionId });
-    }
-  } finally {
-    if (client !== null) {
+    if (result.ok) {
+      // Pay-per-event: one charge per successfully delivered page. Failures are
+      // free — charging for a page the user did not receive would be wrong, and
+      // it also stops us from billing for our own outages.
       try {
-        await client.close();
-      } catch {
-        // Already disconnected / closed — nothing left to clean up.
+        await Actor.charge({ eventName: EVENT_PER_RESULT });
+      } catch (err) {
+        log.warning('charge failed', { url, err: String(err) });
       }
+    } else {
+      log.warning('fetch failed', { url, error: result.error });
     }
-    await Actor.exit();
-  }
 
-  if (sessionMeta === null) {
-    log.warning('run finished without acquiring a session');
-  }
+    return result;
+  });
+
+  const ok = results.filter((r) => r.ok).length;
+  log.info('run finished', { total: results.length, ok, failed: results.length - ok });
+
+  await Actor.exit();
 }
 
 main().catch(async (err) => {

@@ -13,13 +13,13 @@ export interface ActorInput {
   urls: string[];
 
   /**
-   * Which rented browser to drive. The browser must be online and rentable by
-   * this Ceki account. Defaults to the actor's configured browser.
+   * Which browser pool slot to use. Omitted means "any free worker".
+   * Pinning is useful when the same warmed profile must serve every URL.
    */
   browserId?: number;
 
   /**
-   * Wait strategy after `Page.navigate` resolves:
+   * Wait strategy after navigation resolves:
    * - `load`        — return as soon as the load event fired
    * - `networkidle` — additionally wait until no network activity for `networkIdleMs`
    * - `selector`    — additionally wait until `waitSelector` matches
@@ -47,18 +47,14 @@ export interface ActorInput {
    */
   solveChallenge?: boolean;
 
-  /**
-   * Keep the browser session alive after the run so the next run lands on the
-   * same warmed profile. Set false only for one-shot runs that should not
-   * leave a session behind.
-   */
-  keepSession?: boolean;
+  /** How many URLs to have in flight at once. Defaults to 4. */
+  concurrency?: number;
 }
 
 export interface FetchTiming {
-  /** Time spent acquiring (or resuming) the browser session. */
-  sessionMs: number;
-  /** Time spent in `Page.navigate` until the load event. */
+  /** Time the request spent waiting for a free worker. */
+  queueMs: number;
+  /** Time spent navigating until the load event. */
   navigateMs: number;
   /** Time spent in the post-load wait strategy. */
   waitMs: number;
@@ -68,7 +64,7 @@ export interface FetchTiming {
   totalMs: number;
 }
 
-export interface FetchResult {
+export interface FetchResponse {
   url: string;
   ok: boolean;
   /** HTTP status of the main document, when observable. */
@@ -82,11 +78,11 @@ export interface FetchResult {
   /** True when a Cloudflare interstitial was passed before extraction. */
   challengeSolved?: boolean;
   timing: FetchTiming;
-  /** Which browser served this URL and whether the session was reused. */
-  browser: {
-    scheduleId: number;
-    sessionId: string;
-    resumed: boolean;
+  /** Which pool slot served this URL. Never exposes a session id. */
+  worker: {
+    id: number;
+    browserId: number;
+    reacquired: boolean;
   } | null;
   error?: string;
 }
