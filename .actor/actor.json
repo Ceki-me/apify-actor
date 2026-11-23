@@ -10,6 +10,7 @@
   },
   "dockerfile": "../Dockerfile",
   "input": "./input_schema.json",
+  "output": "./output_schema.json",
   "storages": {
     "dataset": "./dataset_schema.json"
   },
@@ -20,13 +21,18 @@
     "pricePerEvent": {
       "page-fetched": {
         "eventTitle": "Page fetched",
-        "eventDescription": "Charged once per successfully retrieved page. Failed fetches are not charged.",
-        "eventPriceUsd": 0.01
+        "eventDescription": "Charged once per successfully retrieved page (HTML). Failed fetches are not charged.",
+        "eventPriceUsd": 0.001
+      },
+      "screenshot": {
+        "eventTitle": "Screenshot",
+        "eventDescription": "Charged once per successfully captured screenshot (PNG, full page when requested), including pages behind a Cloudflare challenge. A screenshot is a separate deliverable: it costs a full-page render and returns an image. Failed captures are not charged.",
+        "eventPriceUsd": 0.002
       },
       "apify-actor-start": {
         "eventTitle": "Actor start",
         "eventDescription": "Charged once when the Actor starts.",
-        "eventPriceUsd": 0.005
+        "eventPriceUsd": 5e-05
       }
     }
   }

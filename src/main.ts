@@ -15,8 +15,17 @@ import { Actor, log } from 'apify';
 import { buildRequestBody, mapLimit, normalizeUrls } from './input.js';
 import type { ActorInput, FetchResponse } from './types.js';
 
-/** Apify PPE event charged once per successfully fetched URL. */
-const EVENT_PER_RESULT = 'page-fetched';
+/**
+ * PPE events. HTML and a screenshot are different products: a screenshot costs
+ * a full-page render and yields an image the caller would otherwise have to
+ * produce themselves, so it is charged separately and higher. A request that
+ * asks for both is charged for both — the caller receives two deliverables.
+ *
+ * Failures are never charged: billing for a page the caller did not receive
+ * would be wrong, and it would make our own outages a revenue source.
+ */
+const EVENT_PAGE_FETCHED = 'page-fetched';
+const EVENT_SCREENSHOT = 'screenshot';
 
 /** How many URLs to have in flight at once. */
 const DEFAULT_CONCURRENCY = 4;
@@ -122,13 +131,25 @@ async function main(): Promise<void> {
     await Actor.pushData(result);
 
     if (result.ok) {
-      // Pay-per-event: one charge per successfully delivered page. Failures are
-      // free — charging for a page the user did not receive would be wrong, and
-      // it also stops us from billing for our own outages.
-      try {
-        await Actor.charge({ eventName: EVENT_PER_RESULT });
-      } catch (err) {
-        log.warning('charge failed', { url, err: String(err) });
+      // Charge for what was actually delivered, not what was requested: the
+      // service can return ok:true with a field missing (a screenshot can fail
+      // on its own while the HTML succeeded).
+      const charges: string[] = [];
+      if (input.returnFields?.includes('screenshot') && result.screenshot) {
+        charges.push(EVENT_SCREENSHOT);
+      }
+      if (result.html) {
+        charges.push(EVENT_PAGE_FETCHED);
+      }
+      for (const eventName of charges) {
+        try {
+          await Actor.charge({ eventName });
+        } catch (err) {
+          log.warning('charge failed', { url, eventName, err: String(err) });
+        }
+      }
+      if (charges.length === 0) {
+        log.warning('nothing deliverable to charge for', { url });
       }
     } else {
       log.warning('fetch failed', { url, error: result.error });

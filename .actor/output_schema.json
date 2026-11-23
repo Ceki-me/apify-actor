@@ -1,0 +1,13 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "Output",
+  "description": "Results of a run: one item per requested URL in the default dataset.",
+  "properties": {
+    "dataset": {
+      "title": "Fetched pages",
+      "type": "string",
+      "description": "One item per URL: the page HTML, cookies, optional screenshot and per-request timing.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items"
+    }
+  }
+}

@@ -77,7 +77,10 @@ charged.**
 
 Pay per event:
 
-- `page-fetched` — charged once per **successfully** retrieved page
+- `page-fetched` — $1.00 per 1,000 pages, charged once per **successfully**
+  retrieved page
+- `screenshot` — $2.00 per 1,000 screenshots, charged only when the screenshot
+  is actually delivered
 - `apify-actor-start` — charged once per run
 
 Platform usage (compute, storage) is billed by Apify on top, as usual.
