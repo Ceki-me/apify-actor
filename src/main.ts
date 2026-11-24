@@ -13,6 +13,7 @@
 import { Actor, log } from 'apify';
 
 import { buildRequestBody, mapLimit, normalizeUrls } from './input.js';
+import { shouldFailRun, summariseRun } from './outcome.js';
 import type { ActorInput, FetchResponse } from './types.js';
 
 /**
@@ -125,7 +126,20 @@ async function main(): Promise<void> {
 
   log.info('fetching', { urls: urls.length, concurrency, service: config.baseUrl });
 
+  // The caller's spending cap (maxTotalChargeUsd) stops charges, not work.
+  // Without this flag a run whose budget ran out on URL 3 of 500 keeps fetching
+  // the other 497: we pay for their browser time and nobody pays us. Charging
+  // happens after delivery — deliberately, so a failed fetch is never billed —
+  // and this is what keeps the two in step.
+  let budgetExhausted = false;
+
   const results = await mapLimit(urls, concurrency, async (url) => {
+    if (budgetExhausted) {
+      const skipped = failure(url, 'skipped: the run reached its maximum charge', Date.now());
+      await Actor.pushData(skipped);
+      return skipped;
+    }
+
     const result = await fetchOne(config, url, input);
 
     await Actor.pushData(result);
@@ -143,7 +157,11 @@ async function main(): Promise<void> {
       }
       for (const eventName of charges) {
         try {
-          await Actor.charge({ eventName });
+          const charged = await Actor.charge({ eventName });
+          if (charged.eventChargeLimitReached) {
+            budgetExhausted = true;
+            log.info('charge limit reached, skipping the remaining URLs', { url, eventName });
+          }
         } catch (err) {
           log.warning('charge failed', { url, eventName, err: String(err) });
         }
@@ -158,8 +176,25 @@ async function main(): Promise<void> {
     return result;
   });
 
-  const ok = results.filter((r) => r.ok).length;
-  log.info('run finished', { total: results.length, ok, failed: results.length - ok });
+  const outcome = summariseRun(results);
+  log.info('run finished', {
+    total: outcome.total,
+    ok: outcome.ok,
+    failed: outcome.failed,
+  });
+
+  // A run that retrieved nothing did not do its job. Exiting 0 there is a lie:
+  // the Store page shows a green run, the dataset "has items" (one error record
+  // per URL), and the platform's own daily check — which asks for a successful
+  // status plus a non-empty dataset — cannot tell a broken Actor from a working
+  // one. The failure only surfaces when a paying user hits it.
+  if (shouldFailRun(outcome)) {
+    await Actor.fail(
+      `No page was retrieved: ${outcome.ok}/${outcome.total} succeeded. ` +
+        `First error: ${outcome.firstError ?? 'no page retrieved'}`,
+    );
+    return;
+  }
 
   await Actor.exit();
 }

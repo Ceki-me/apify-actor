@@ -8,7 +8,9 @@
       "type": "array",
       "description": "Pages to retrieve. Each URL produces one dataset item and one charge (failures are free).",
       "editor": "stringList",
-      "prefill": [],
+      "prefill": [
+        "https://example.com"
+      ],
       "items": {
         "type": "string",
         "pattern": "^https?://"

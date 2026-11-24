@@ -1,8 +1,8 @@
 {
   "actorSpecification": 1,
-  "name": "ceki-real-browser-fetch",
-  "title": "Real Browser Fetch — protected pages via warmed Chrome sessions",
-  "description": "Fetch pages that block ordinary scrapers. Requests run through a real, already-warmed Chrome profile rented from Ceki — genuine fingerprint, real cookies, persistent session across runs. Returns HTML, cookies and screenshots.",
+  "name": "parse-anything",
+  "title": "Parse Anything — real browsers from real people",
+  "description": "Scrape, screenshot and get past Cloudflare/CAPTCHA on sites that block ordinary scrapers. Every request runs in a real Chrome browser rented from Ceki — a marketplace of browsers belonging to real people. Genuine warmed profile, real fingerprint, real cookies. Returns HTML, cookies and screenshots.",
   "version": "0.5",
   "buildTag": "latest",
   "meta": {
